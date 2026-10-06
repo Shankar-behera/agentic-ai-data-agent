@@ -1,0 +1,91 @@
+# Required in .env: DB_PASSWORD, DB_READONLY_PASSWORD, API_KEY   (see .env.example)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-rides_db}
+      DB_READONLY_USER: ${DB_READONLY_USER:-analyst_ro}
+      DB_READONLY_PASSWORD: ${DB_READONLY_PASSWORD:?set DB_READONLY_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro   # schema, seed, read-only role (first start only)
+      - ./data/seed:/seed:ro
+    ports:
+      - "127.0.0.1:5432:5432"                        # loopback only; remove to keep it internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-rides_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [app-network]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [app-network]
+    restart: unless-stopped
+    # GPU: uncomment and install the NVIDIA container toolkit
+    # deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } } }
+
+  ollama-pull:                                       # one-shot: downloads the model, then exits
+    image: ollama/ollama:latest
+    depends_on:
+      ollama: { condition: service_healthy }
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "ollama pull ${LLM_MODEL:-phi3:mini}"]
+    networks: [app-network]
+    restart: "no"
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_KEY: ${API_KEY:?set API_KEY in .env}
+      LLM_MODEL: ${LLM_MODEL:-phi3:mini}
+      OLLAMA_BASE_URL: http://ollama:11434
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-rides_db}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_READONLY_USER: ${DB_READONLY_USER:-analyst_ro}
+      DB_READONLY_PASSWORD: ${DB_READONLY_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+    depends_on:
+      db: { condition: service_healthy }
+      ollama-pull: { condition: service_completed_successfully }
+    volumes:
+      - app_data:/app/data
+    read_only: true                                  # sandboxed code cannot write to the image
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { memory: 2g }
+    networks: [app-network]
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ollama_data:
+  app_data:

@@ -1,0 +1,32 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# runtime data (seed CSVs in data/seed are tracked)
+data/uploads/
+data/extract/
+data/transform/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+node_modules/
